@@ -1,0 +1,75 @@
+export interface User {
+  username: string;
+  role: 'admin' | 'operator' | 'client';
+  created_at?: string;
+}
+
+export interface Product {
+  id: string;
+  client: string;
+  sku: string;
+  name?: string;
+  length?: number;
+  width?: number;
+  height?: number;
+  weight?: number;
+  created_at?: string;
+}
+
+export interface InventoryItem {
+  id: string;
+  client: string;
+  sku: string;
+  location: string;
+  qty: number;
+  updated_at: string;
+}
+
+export interface InboundRecord {
+  id: string;
+  tracking_no: string;
+  client: string;
+  status: string;
+  created_at: string;
+}
+
+export interface InboundOrder {
+  id?: string;
+  order_no?: string;
+  client_id?: string;
+  inbound_type?: string;
+  tracking_no?: string;
+  status?: string;
+  expected_date?: string;
+  created_at?: string;
+  updated_at?: string;
+  remark?: string;
+  created_by?: string;
+  carrier?: string;
+}
+
+export interface OutboundOrder {
+  id?: string;
+  order_no?: string;
+  client?: string;
+  carrier?: string;
+  status?: string;
+  remark?: string;
+  created_at?: string;
+  service_type?: string;
+  shipped_at?: string;
+  attachments?: string[];
+  packing_data?: any[];
+  label_files?: string[];
+}
+
+export interface BillingRecord {
+  id: string;
+  client: string;
+  type: 'inbound' | 'storage' | 'outbound' | 'extra';
+  amount: number;
+  currency: string;
+  status: 'pending' | 'paid';
+  remark?: string;
+  created_at: string;
+}

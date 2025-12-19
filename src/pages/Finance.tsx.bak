@@ -1,0 +1,497 @@
+import { useState, useEffect } from 'react';
+import { supabase } from '../lib/supabase';
+import { useTranslation } from '../lib/i18n';
+import { DollarSign, CreditCard, TrendingUp, Settings, FileText, Edit, Trash } from 'lucide-react';
+
+export default function Finance() {
+  const { t } = useTranslation();
+  const [view, setView] = useState('dashboard');
+  const [accounts, setAccounts] = useState<any[]>([]);
+  const [transactions, setTransactions] = useState<any[]>([]);
+  const [rules, setRules] = useState<any[]>([]);
+  const [quotes, setQuotes] = useState<any[]>([]);
+  const [clients, setClients] = useState<string[]>([]);
+
+  // Modals
+  const [showRecharge, setShowRecharge] = useState(false);
+  const [rechargeForm, setRechargeForm] = useState({ client_id: '', amount: 0, description: 'System Recharge' });
+  
+  const [editingRule, setEditingRule] = useState<any>(null);
+  const [editingQuote, setEditingQuote] = useState<any>(null);
+
+  const user = JSON.parse(localStorage.getItem('wh_user') || '{}');
+  const isAdmin = user.role === 'admin';
+
+  useEffect(() => {
+    fetchAccounts();
+    if(isAdmin) {
+        fetchRules();
+        fetchClients();
+        fetchQuotes();
+    }
+  }, []);
+
+  const fetchClients = async () => {
+      const { data } = await supabase.from('clients').select('name').eq('type', 'client');
+      if(data) setClients(data.map(c => c.name));
+  };
+
+  const fetchAccounts = async () => {
+    let q = supabase.from('finance_accounts').select('*');
+    if (!isAdmin) q = q.eq('client_id', user.username);
+    const { data: accs } = await q;
+
+    if (!accs) return;
+
+    if (isAdmin) {
+        const { data: clientList } = await supabase.from('clients').select('name').eq('type', 'client');
+        const clientNames = new Set(clientList?.map(c => c.name));
+        setAccounts(accs.filter(a => clientNames.has(a.client_id)));
+    } else {
+        setAccounts(accs);
+    }
+  };
+
+  const formatCurrency = (amount: number) => {
+      return `€${amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  };
+
+  const fetchRules = async () => {
+    const { data } = await supabase.from('finance_rules').select('*').order('created_at');
+    if(data) setRules(data);
+  };
+
+  const fetchQuotes = async () => {
+      const { data } = await supabase.from('finance_quotes').select('*').order('created_at', {ascending: false});
+      if(data) setQuotes(data);
+  };
+
+  const fetchTransactions = async (clientId?: string) => {
+    let q = supabase.from('finance_transactions').select('*').order('created_at', {ascending:false});
+    if(clientId) q = q.eq('client_id', clientId);
+    else if(!isAdmin) q = q.eq('client_id', user.username);
+    
+    const { data } = await q;
+    if(data) setTransactions(data);
+  };
+
+  // --- Actions ---
+
+  const handleRecharge = async () => {
+      if (!rechargeForm.client_id || rechargeForm.amount <= 0) return alert('Invalid Input');
+      
+      try {
+          const { error: txError } = await supabase.from('finance_transactions').insert([{
+              client_id: rechargeForm.client_id,
+              type: 'RECHARGE',
+              amount: rechargeForm.amount,
+              description: rechargeForm.description,
+              operator: user.username,
+              balance_after: 0 
+          }]);
+          if(txError) throw txError;
+
+          const { data: acc } = await supabase.from('finance_accounts').select('balance').eq('client_id', rechargeForm.client_id).single();
+          const newBal = (acc?.balance || 0) + rechargeForm.amount;
+          
+          await supabase.from('finance_accounts').update({ balance: newBal }).eq('client_id', rechargeForm.client_id);
+          
+          alert(t('msg_success'));
+          setShowRecharge(false);
+          fetchAccounts();
+      } catch(e: any) {
+          alert(e.message);
+      }
+  };
+
+  const saveRule = async (rule: any) => {
+      const isNew = !rule.id;
+      if (isNew) {
+          const { error } = await supabase.from('finance_rules').insert([rule]);
+          if(error) alert(error.message);
+      } else {
+          const { error } = await supabase.from('finance_rules').update(rule).eq('id', rule.id);
+          if(error) alert(error.message);
+      }
+      setEditingRule(null);
+      fetchRules();
+  };
+
+  const deleteRule = async (id: string) => {
+      if(!confirm('Delete this rule?')) return;
+      await supabase.from('finance_rules').delete().eq('id', id);
+      fetchRules();
+  };
+
+  const saveQuote = async (quote: any) => {
+      const isNew = !quote.id;
+      const payload = { ...quote };
+      if (isNew) {
+          const { error } = await supabase.from('finance_quotes').insert([payload]);
+          if(error) alert(error.message);
+      } else {
+          payload.version = (payload.version || 1) + 1;
+          const { error } = await supabase.from('finance_quotes').update(payload).eq('id', quote.id);
+          if(error) alert(error.message);
+      }
+      setEditingQuote(null);
+      fetchQuotes();
+  };
+
+  const deleteQuote = async (id: string) => {
+      if(!confirm('Delete quote?')) return;
+      await supabase.from('finance_quotes').delete().eq('id', id);
+      fetchQuotes();
+  };
+
+
+  // --- Components ---
+
+  const Dashboard = () => {
+      const totalBalance = accounts.reduce((sum, acc) => sum + (acc.balance || 0), 0);
+      const totalCredit = accounts.reduce((sum, acc) => sum + (acc.credit_limit || 0), 0);
+
+      return (
+          <div className="space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-2xl p-6 text-white shadow-lg">
+                      <div className="flex items-center gap-3 mb-2">
+                          <div className="p-2 bg-white/20 rounded-lg"><DollarSign size={24}/></div>
+                          <span className="font-bold opacity-80">总资产余额 (EUR)</span>
+                      </div>
+                      <div className="text-3xl font-bold">{formatCurrency(totalBalance)}</div>
+                  </div>
+                  <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
+                      <div className="flex items-center gap-3 mb-2 text-gray-600">
+                          <div className="p-2 bg-purple-100 rounded-lg text-purple-600"><CreditCard size={24}/></div>
+                          <span className="font-bold">总授信额度</span>
+                      </div>
+                      <div className="text-3xl font-bold text-gray-800">{formatCurrency(totalCredit)}</div>
+                  </div>
+                  <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
+                      <div className="flex items-center gap-3 mb-2 text-gray-600">
+                          <div className="p-2 bg-green-100 rounded-lg text-green-600"><TrendingUp size={24}/></div>
+                          <span className="font-bold">本月消费预估</span>
+                      </div>
+                      <div className="text-3xl font-bold text-gray-800">--</div>
+                  </div>
+              </div>
+
+              {/* Client List */}
+              <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+                  <div className="p-4 border-b flex justify-between items-center">
+                      <h3 className="font-bold text-lg">客户资金账户</h3>
+                      {isAdmin && (
+                          <button 
+                            onClick={() => { setRechargeForm({client_id:'', amount:0, description:'System Recharge'}); setShowRecharge(true); }}
+                            className="bg-green-600 text-white px-4 py-2 rounded-lg font-bold text-xs hover:bg-green-700"
+                          >
+                              + 充值
+                          </button>
+                      )}
+                  </div>
+                  <table className="w-full text-left text-sm">
+                      <thead className="bg-gray-50">
+                          <tr>
+                              <th className="p-4">客户</th>
+                              <th className="p-4">余额</th>
+                              <th className="p-4">授信</th>
+                              <th className="p-4">操作</th>
+                          </tr>
+                      </thead>
+                      <tbody className="divide-y">
+                          {accounts.map(acc => (
+                              <tr key={acc.client_id}>
+                                  <td className="p-4 font-bold">{acc.client_id}</td>
+                                  <td className={`p-4 font-bold ${acc.balance < 0 ? 'text-red-500' : 'text-green-600'}`}>
+                                      {formatCurrency(acc.balance)}
+                                  </td>
+                                  <td className="p-4">{formatCurrency(acc.credit_limit || 0)}</td>
+                                  <td className="p-4">
+                                      <button onClick={()=>{ setView('transactions'); fetchTransactions(acc.client_id); }} className="text-blue-600 hover:underline">
+                                          查看流水
+                                      </button>
+                                  </td>
+                              </tr>
+                          ))}
+                      </tbody>
+                  </table>
+              </div>
+          </div>
+      );
+  };
+
+  const TransactionList = () => (
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+          <div className="p-4 border-b flex justify-between items-center">
+              <h3 className="font-bold text-lg">资金流水明细</h3>
+              <button onClick={()=>setView('dashboard')} className="text-gray-500">返回</button>
+          </div>
+          <table className="w-full text-left text-sm">
+              <thead className="bg-gray-50">
+                  <tr>
+                      <th className="p-4">时间</th>
+                      <th className="p-4">客户</th>
+                      <th className="p-4">类型</th>
+                      <th className="p-4">金额</th>
+                      <th className="p-4">余额</th>
+                      <th className="p-4">描述</th>
+                  </tr>
+              </thead>
+              <tbody className="divide-y">
+                  {transactions.map(tx => (
+                      <tr key={tx.id}>
+                          <td className="p-4 text-gray-500">{new Date(tx.created_at).toLocaleString()}</td>
+                          <td className="p-4 font-bold">{tx.client_id}</td>
+                          <td className="p-4">
+                              <span className={`px-2 py-1 rounded text-xs font-bold ${tx.type==='RECHARGE'?'bg-green-100 text-green-700':'bg-red-50 text-red-600'}`}>
+                                  {tx.type}
+                              </span>
+                          </td>
+                          <td className="p-4 font-bold">{formatCurrency(tx.amount)}</td>
+                          <td className="p-4 text-gray-500">{formatCurrency(tx.balance_after)}</td>
+                          <td className="p-4">{tx.description}</td>
+                      </tr>
+                  ))}
+                  {transactions.length===0 && <tr><td colSpan={6} className="p-8 text-center text-gray-400">暂无数据</td></tr>}
+              </tbody>
+          </table>
+      </div>
+  );
+
+  const RuleConfig = () => (
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+          <div className="p-4 border-b flex justify-between items-center">
+              <h3 className="font-bold text-lg">计费规则配置</h3>
+              <button 
+                onClick={() => setEditingRule({ name: '', type: 'STORAGE', price: 0, unit: 'per_item', client_id: '' })}
+                className="bg-blue-600 text-white px-4 py-2 rounded-lg font-bold text-sm"
+              >
+                  + 新增规则
+              </button>
+          </div>
+          <table className="w-full text-left text-sm">
+              <thead className="bg-gray-50">
+                  <tr>
+                      <th className="p-4">规则名称</th>
+                      <th className="p-4">类型</th>
+                      <th className="p-4">单价</th>
+                      <th className="p-4">单位</th>
+                      <th className="p-4">适用客户</th>
+                      <th className="p-4">操作</th>
+                  </tr>
+              </thead>
+              <tbody className="divide-y">
+                  {rules.map(r => (
+                      <tr key={r.id}>
+                          <td className="p-4 font-bold">{r.name}</td>
+                          <td className="p-4"><span className="bg-gray-100 px-2 py-1 rounded text-xs">{r.type}</span></td>
+                          <td className="p-4 font-bold text-orange-600">{formatCurrency(r.price)}</td>
+                          <td className="p-4 text-gray-500">{r.unit}</td>
+                          <td className="p-4">{r.client_id || '全局通用'}</td>
+                          <td className="p-4 flex gap-2">
+                              <button onClick={()=>setEditingRule(r)} className="text-blue-500 hover:text-blue-700"><Edit size={16}/></button>
+                              <button onClick={()=>deleteRule(r.id)} className="text-red-400 hover:text-red-600"><Trash size={16}/></button>
+                          </td>
+                      </tr>
+                  ))}
+              </tbody>
+          </table>
+      </div>
+  );
+
+  const QuoteManager = () => (
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+          <div className="p-4 border-b flex justify-between items-center">
+              <h3 className="font-bold text-lg">客户报价管理</h3>
+              <button 
+                onClick={() => setEditingQuote({ client_id: clients[0]||'', service_type: 'STORAGE', price: 0, unit: 'unit' })}
+                className="bg-blue-600 text-white px-4 py-2 rounded-lg font-bold text-sm"
+              >
+                  + 新增报价
+              </button>
+          </div>
+          <table className="w-full text-left text-sm">
+              <thead className="bg-gray-50">
+                  <tr>
+                      <th className="p-4">客户</th>
+                      <th className="p-4">服务类型</th>
+                      <th className="p-4">SKU (可选)</th>
+                      <th className="p-4">价格</th>
+                      <th className="p-4">版本</th>
+                      <th className="p-4">操作</th>
+                  </tr>
+              </thead>
+              <tbody className="divide-y">
+                  {quotes.map(q => (
+                      <tr key={q.id}>
+                          <td className="p-4 font-bold">{q.client_id}</td>
+                          <td className="p-4"><span className="bg-blue-50 text-blue-600 px-2 py-1 rounded text-xs">{q.service_type}</span></td>
+                          <td className="p-4 font-mono text-xs">{q.sku || '-'}</td>
+                          <td className="p-4 font-bold text-orange-600">{formatCurrency(q.price)} / {q.unit}</td>
+                          <td className="p-4 text-gray-400">v{q.version}</td>
+                          <td className="p-4 flex gap-2">
+                              <button onClick={()=>setEditingQuote(q)} className="text-blue-500 hover:text-blue-700"><Edit size={16}/></button>
+                              <button onClick={()=>deleteQuote(q.id)} className="text-red-400 hover:text-red-600"><Trash size={16}/></button>
+                          </td>
+                      </tr>
+                  ))}
+                  {quotes.length === 0 && <tr><td colSpan={6} className="p-8 text-center text-gray-400">暂无报价记录</td></tr>}
+              </tbody>
+          </table>
+      </div>
+  );
+
+  return (
+    <div className="max-w-6xl mx-auto p-4">
+        {/* Navigation */}
+        <div className="flex gap-4 mb-6 overflow-x-auto pb-2">
+            <button onClick={()=>setView('dashboard')} className={`px-6 py-2 rounded-xl font-bold flex items-center gap-2 whitespace-nowrap ${view==='dashboard'?'bg-blue-600 text-white shadow-lg':'bg-white text-gray-600'}`}>
+                <TrendingUp size={18}/> 财务概览
+            </button>
+            <button onClick={()=>{setView('transactions'); fetchTransactions();}} className={`px-6 py-2 rounded-xl font-bold flex items-center gap-2 whitespace-nowrap ${view==='transactions'?'bg-blue-600 text-white shadow-lg':'bg-white text-gray-600'}`}>
+                <FileText size={18}/> 资金流水
+            </button>
+            {isAdmin && (
+                <>
+                <button onClick={()=>setView('quotes')} className={`px-6 py-2 rounded-xl font-bold flex items-center gap-2 whitespace-nowrap ${view==='quotes'?'bg-blue-600 text-white shadow-lg':'bg-white text-gray-600'}`}>
+                    <FileText size={18}/> 客户报价
+                </button>
+                <button onClick={()=>setView('rules')} className={`px-6 py-2 rounded-xl font-bold flex items-center gap-2 whitespace-nowrap ${view==='rules'?'bg-blue-600 text-white shadow-lg':'bg-white text-gray-600'}`}>
+                    <Settings size={18}/> 计费配置
+                </button>
+                </>
+            )}
+        </div>
+
+        {/* Main View */}
+        {view === 'dashboard' && <Dashboard />}
+        {view === 'transactions' && <TransactionList />}
+        {view === 'rules' && <RuleConfig />}
+        {view === 'quotes' && <QuoteManager />}
+
+        {/* --- Modals --- */}
+
+        {/* Recharge Modal */}
+        {showRecharge && (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+                <div className="bg-white rounded-2xl p-6 w-96 shadow-2xl">
+                    <h3 className="text-lg font-bold mb-4">客户充值</h3>
+                    <div className="space-y-4">
+                        <div>
+                            <label className="block text-xs font-bold text-gray-500 mb-1">选择客户</label>
+                            <select className="w-full border p-2 rounded" value={rechargeForm.client_id} onChange={e=>setRechargeForm({...rechargeForm, client_id:e.target.value})}>
+                                <option value="">-- Select --</option>
+                                {clients.map(c => <option key={c} value={c}>{c}</option>)}
+                            </select>
+                        </div>
+                        <div>
+                            <label className="block text-xs font-bold text-gray-500 mb-1">金额 (EUR)</label>
+                            <input type="number" className="w-full border p-2 rounded" value={rechargeForm.amount} onChange={e=>setRechargeForm({...rechargeForm, amount:Number(e.target.value)})} />
+                        </div>
+                        <div>
+                            <label className="block text-xs font-bold text-gray-500 mb-1">备注</label>
+                            <input className="w-full border p-2 rounded" value={rechargeForm.description} onChange={e=>setRechargeForm({...rechargeForm, description:e.target.value})} />
+                        </div>
+                        <div className="flex gap-2 pt-2">
+                            <button onClick={()=>setShowRecharge(false)} className="flex-1 py-2 border rounded font-bold text-gray-500">取消</button>
+                            <button onClick={handleRecharge} className="flex-1 py-2 bg-green-600 text-white rounded font-bold">确认充值</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        )}
+
+        {/* Rule Edit Modal */}
+        {editingRule && (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+                <div className="bg-white rounded-2xl p-6 w-96 shadow-2xl">
+                    <h3 className="text-lg font-bold mb-4">{editingRule.id ? '编辑规则' : '新增规则'}</h3>
+                    <div className="space-y-4">
+                        <div>
+                            <label className="block text-xs font-bold text-gray-500 mb-1">规则名称</label>
+                            <input className="w-full border p-2 rounded" value={editingRule.name} onChange={e=>setEditingRule({...editingRule, name:e.target.value})} />
+                        </div>
+                        <div>
+                            <label className="block text-xs font-bold text-gray-500 mb-1">类型</label>
+                            <select className="w-full border p-2 rounded" value={editingRule.type} onChange={e=>setEditingRule({...editingRule, type:e.target.value})}>
+                                <option value="STORAGE">STORAGE (仓储费)</option>
+                                <option value="OPERATION">OPERATION (操作费)</option>
+                                <option value="VAS">VAS (增值服务)</option>
+                                <option value="RECEIVING">RECEIVING (收件费)</option>
+                                <option value="INSPECTION">INSPECTION (质检费)</option>
+                                <option value="OUTBOUND">OUTBOUND (出库费)</option>
+                            </select>
+                        </div>
+                        <div className="flex gap-2">
+                            <div className="flex-1">
+                                <label className="block text-xs font-bold text-gray-500 mb-1">单价</label>
+                                <input type="number" className="w-full border p-2 rounded" value={editingRule.price} onChange={e=>setEditingRule({...editingRule, price:Number(e.target.value)})} />
+                            </div>
+                            <div className="flex-1">
+                                <label className="block text-xs font-bold text-gray-500 mb-1">单位</label>
+                                <input className="w-full border p-2 rounded" value={editingRule.unit} onChange={e=>setEditingRule({...editingRule, unit:e.target.value})} />
+                            </div>
+                        </div>
+                        <div>
+                            <label className="block text-xs font-bold text-gray-500 mb-1">适用客户 (空=全局)</label>
+                            <select className="w-full border p-2 rounded" value={editingRule.client_id || ''} onChange={e=>setEditingRule({...editingRule, client_id:e.target.value || null})}>
+                                <option value="">(Global Rule)</option>
+                                {clients.map(c => <option key={c} value={c}>{c}</option>)}
+                            </select>
+                        </div>
+                        <div className="flex gap-2 pt-2">
+                            <button onClick={()=>setEditingRule(null)} className="flex-1 py-2 border rounded font-bold text-gray-500">取消</button>
+                            <button onClick={()=>saveRule(editingRule)} className="flex-1 py-2 bg-blue-600 text-white rounded font-bold">保存</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        )}
+
+        {/* Quote Edit Modal */}
+        {editingQuote && (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+                <div className="bg-white rounded-2xl p-6 w-96 shadow-2xl">
+                    <h3 className="text-lg font-bold mb-4">{editingQuote.id ? '编辑报价' : '新增报价'}</h3>
+                    <div className="space-y-4">
+                         <div>
+                            <label className="block text-xs font-bold text-gray-500 mb-1">客户</label>
+                            <select className="w-full border p-2 rounded" value={editingQuote.client_id} onChange={e=>setEditingQuote({...editingQuote, client_id:e.target.value})}>
+                                {clients.map(c => <option key={c} value={c}>{c}</option>)}
+                            </select>
+                        </div>
+                        <div>
+                            <label className="block text-xs font-bold text-gray-500 mb-1">服务类型</label>
+                            <select className="w-full border p-2 rounded" value={editingQuote.service_type} onChange={e=>setEditingQuote({...editingQuote, service_type:e.target.value})}>
+                                <option value="STORAGE">STORAGE</option>
+                                <option value="INBOUND">INBOUND</option>
+                                <option value="OUTBOUND">OUTBOUND</option>
+                                <option value="VAS">VAS</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label className="block text-xs font-bold text-gray-500 mb-1">指定 SKU (可选)</label>
+                            <input className="w-full border p-2 rounded" placeholder="Optional" value={editingQuote.sku || ''} onChange={e=>setEditingQuote({...editingQuote, sku:e.target.value || null})} />
+                        </div>
+                        <div className="flex gap-2">
+                            <div className="flex-1">
+                                <label className="block text-xs font-bold text-gray-500 mb-1">价格</label>
+                                <input type="number" className="w-full border p-2 rounded" value={editingQuote.price} onChange={e=>setEditingQuote({...editingQuote, price:Number(e.target.value)})} />
+                            </div>
+                            <div className="flex-1">
+                                <label className="block text-xs font-bold text-gray-500 mb-1">单位</label>
+                                <input className="w-full border p-2 rounded" value={editingQuote.unit} onChange={e=>setEditingQuote({...editingQuote, unit:e.target.value})} />
+                            </div>
+                        </div>
+                        <div className="flex gap-2 pt-2">
+                            <button onClick={()=>setEditingQuote(null)} className="flex-1 py-2 border rounded font-bold text-gray-500">取消</button>
+                            <button onClick={()=>saveQuote(editingQuote)} className="flex-1 py-2 bg-blue-600 text-white rounded font-bold">保存</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        )}
+    </div>
+  );
+}

@@ -1,0 +1,7 @@
+import { createClient } from '@supabase/supabase-js';
+
+// 🔴 您的 Supabase 配置
+const SUPABASE_URL = "https://jvmfqhbchvqnyntaiske.supabase.co"; 
+const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp2bWZxaGJjaHZxbnludGFpc2tlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjU4MTA5NTQsImV4cCI6MjA4MTM4Njk1NH0.lxvib2kWga60pdd7c8MpK2QHwofHXIHR_ZHmBLSDuRA";
+
+export const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
